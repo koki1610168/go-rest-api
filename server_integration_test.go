@@ -4,18 +4,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"io"
+	"os"
 )
 
 
 
 func TestRecordingWinsAndRetrievingThem(t *testing.T) {
-	store := NewInMemoryPlayerStore()
+	database, cleanDatabase := createTempFile(t, `[]`)
+	defer cleanDatabase()
+	store, err := NewFileSystemPlayerStore(database)
+	assertNoError(t, err)
 	server := NewPlayerServer(store)
 	player := "Pepper"
 
 	server.ServeHTTP(httptest.NewRecorder(), newPostWinRequest(player))
 	server.ServeHTTP(httptest.NewRecorder(), newPostWinRequest(player))
 	server.ServeHTTP(httptest.NewRecorder(), newPostWinRequest(player))
+
+
+	printFileContents(t, database)
+	
 
 	t.Run("get score", func(t *testing.T) {
 		response := httptest.NewRecorder()
@@ -38,5 +47,30 @@ func TestRecordingWinsAndRetrievingThem(t *testing.T) {
 		assertLeague(t, got, want)
 	})
 
+	t.Run("works with an empty file", func(t *testing.T) {
+		database, cleanDatabase := createTempFile(t, "")
+		defer cleanDatabase()
+
+		_, err := NewFileSystemPlayerStore(database)
+
+		assertNoError(t, err)
+	})
+
 }
 	
+
+func printFileContents(t testing.TB, file *os.File) {
+	t.Helper()
+
+	_, err := file.Seek(0, 0)
+	if err != nil {
+		t.Fatalf("could not seek file: %v", err)
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("could not read file: %v", err)
+	}
+
+	t.Logf("database file contents:\n%s", data)
+}
