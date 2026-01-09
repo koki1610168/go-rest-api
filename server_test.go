@@ -1,16 +1,20 @@
 package main
 
 import (
-	"testing"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"fmt"
+	"reflect"
 	"sync"
+	"io"
+	"testing"
 )
 
 type StubPlayerStore struct {
 	scores map[string]int
 	winCalls []string
+	league []Player
 }
 
 func (s *StubPlayerStore) GetPlayerScore(name string) int {
@@ -22,6 +26,10 @@ func (s *StubPlayerStore) RecordWin(name string) {
 	s.winCalls = append(s.winCalls, name)
 }
 
+func (s *StubPlayerStore) GetLeague() []Player {
+	return s.league
+}
+
 func TestGETPlayers(t *testing.T) {
 	store := StubPlayerStore{
 		map[string]int{
@@ -29,9 +37,10 @@ func TestGETPlayers(t *testing.T) {
 			"Floyd": 10,
 		},
 		nil,
+		nil,
 	}
 
-	server := &PlayerServer{&store}
+	server := NewPlayerServer(&store) 
 
 
 	t.Run("returns Pepper's score", func(t *testing.T) {
@@ -68,8 +77,9 @@ func TestStoreWins(t *testing.T) {
 	store := StubPlayerStore{
 		map[string]int{},
 		nil,
+		nil,
 	}
-	server := &PlayerServer{&store}
+	server := NewPlayerServer(&store)
 
 	t.Run("it returns accepted on POST", func(t *testing.T) {
 		player := "Pepper"
@@ -93,7 +103,7 @@ func TestStoreWins(t *testing.T) {
 
 func TestConcurrentReadAndWrite(t *testing.T) {
 	store := NewInMemoryPlayerStore()
-	server := &PlayerServer{store}
+	server := NewPlayerServer(store)
 	player := "Pepper"
 
 	var wg sync.WaitGroup
@@ -128,6 +138,61 @@ func TestConcurrentReadAndWrite(t *testing.T) {
 	server.ServeHTTP(response, newGetScoreResult(player))
 	assertStatus(t, response.Code, http.StatusOK)
 	assertResponseBody(t, response.Body.String(), "100")
+}
+
+
+func TestLeague(t *testing.T) {
+
+	t.Run("it returns 200 on /league", func (t *testing.T) {
+		wantedLeague := []Player{
+			{"Cleo", 20},
+			{"Chris", 30},
+			{"John", 50},
+		} 
+		store := StubPlayerStore{nil, nil, wantedLeague}
+		server := NewPlayerServer(&store)
+
+		request := newLeagueRequest()
+		response := httptest.NewRecorder()
+
+		server.ServeHTTP(response, request)
+
+		got := getLeagueFromResponse(t, response.Body)
+		assertStatus(t, response.Code, http.StatusOK)
+		assertLeague(t, got, wantedLeague)
+
+
+	})
+}
+
+
+func assertContentType(t testing.TB, response *httptest.ResponseRecorder, want string) {
+	if response.Result().Header.Get("content-type") != want {
+		t.Errorf("reponse does not have content-tyep of %v. Got %v", want, response.Result().Header.Get("content-type"))
+	}
+
+}
+
+func assertLeague(t testing.TB, got, want []Player) {
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+
+}
+
+func getLeagueFromResponse(t testing.TB, body io.Reader) (league []Player) {
+	t.Helper()
+	err := json.NewDecoder(body).Decode(&league)
+
+	if err != nil {
+		t.Fatalf("Unable to parse the response from the server %q into the slice of %v", body, err)
+	}
+	return
+}
+
+func newLeagueRequest() *http.Request {
+	request, _ := http.NewRequest(http.MethodGet, "/league", nil)
+	return request
 }
 
 
